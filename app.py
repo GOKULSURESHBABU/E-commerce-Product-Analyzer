@@ -11,6 +11,7 @@ from data_analysis.sql_insights import keyword_signal_table, product_risk_table,
 from database import get_recent_runs, init_db, record_analysis_run
 from deployment.app_config import APP_NAME, REQUIRED_REVIEW_COLUMNS
 from feature_selection.selector import top_discriminative_terms
+from feedback_analyzer import extract_feedback_themes, generate_recommendations, get_top_keywords_by_sentiment
 from google_oauth import complete_google_login, get_google_login_url, is_google_oauth_configured
 from model_evaluation.evaluator import evaluate_model
 from model_tuning.tuning import train_tuned_classifier
@@ -203,7 +204,7 @@ def analyzer_page() -> None:
     metric_cols[2].metric("Positive sentiment", f"{positive_rate:.1f}%")
     metric_cols[3].metric("Negative sentiment", f"{negative_rate:.1f}%")
 
-    tabs = st.tabs(["Overview", "SQL Insights", "Classification", "Feature Selection", "Data Preview"])
+    tabs = st.tabs(["Overview", "SQL Insights", "Classification", "Feature Selection", "Customer Feedback", "Data Preview"])
 
     with tabs[0]:
         left, right = st.columns([1, 1])
@@ -261,6 +262,70 @@ def analyzer_page() -> None:
             st.warning(f"Feature selection needs more text variety: {exc}")
 
     with tabs[4]:
+        st.subheader("Customer Feedback Themes & Insights")
+        st.markdown("Automatically extracted themes from customer reviews to identify what customers praise and what they complain about.")
+        
+        # Extract themes and generate recommendations
+        themes = extract_feedback_themes(analyzed, n_themes=4)
+        recommendations = generate_recommendations(analyzed, themes)
+        keywords = get_top_keywords_by_sentiment(analyzed, top_n=10)
+        
+        # Display recommendations with color coding
+        st.subheader("Action Items")
+        if recommendations:
+            for rec in recommendations:
+                color_map = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Info": "🔵"}
+                priority_icon = color_map.get(rec["priority"], "⚪")
+                with st.expander(f"{priority_icon} {rec['action']} ({rec['priority']})"):
+                    st.write(rec["details"])
+        
+        # Display themes by sentiment
+        col_pos, col_neg, col_neu = st.columns(3)
+        
+        with col_pos:
+            st.markdown("### 🟢 What Customers Love")
+            for theme in themes.get("positive", []):
+                if "count" in theme:
+                    st.markdown(f"**{theme.get('theme', 'N/A')}**")
+                    st.caption(f"{theme['count']} reviews ({theme.get('percentage', 0):.0f}%)")
+                    if theme.get("keywords"):
+                        st.caption(f"Keywords: {', '.join(theme['keywords'][:3])}")
+        
+        with col_neg:
+            st.markdown("### 🔴 What Needs Improvement")
+            for theme in themes.get("negative", []):
+                if "count" in theme:
+                    st.markdown(f"**{theme.get('theme', 'N/A')}**")
+                    st.caption(f"{theme['count']} reviews ({theme.get('percentage', 0):.0f}%)")
+                    if theme.get("keywords"):
+                        st.caption(f"Keywords: {', '.join(theme['keywords'][:3])}")
+        
+        with col_neu:
+            st.markdown("### 🟡 Neutral Feedback")
+            for theme in themes.get("neutral", []):
+                if "count" in theme:
+                    st.markdown(f"**{theme.get('theme', 'N/A')}**")
+                    st.caption(f"{theme['count']} reviews ({theme.get('percentage', 0):.0f}%)")
+                    if theme.get("keywords"):
+                        st.caption(f"Keywords: {', '.join(theme['keywords'][:3])}")
+        
+        # Top keywords
+        st.subheader("Top Keywords by Sentiment")
+        kw_col1, kw_col2, kw_col3 = st.columns(3)
+        with kw_col1:
+            st.markdown("**Positive Words**")
+            for kw in keywords.get("positive", []):
+                st.caption(f"{kw['word']} ({kw['importance']})")
+        with kw_col2:
+            st.markdown("**Negative Words**")
+            for kw in keywords.get("negative", []):
+                st.caption(f"{kw['word']} ({kw['importance']})")
+        with kw_col3:
+            st.markdown("**Neutral Words**")
+            for kw in keywords.get("neutral", []):
+                st.caption(f"{kw['word']} ({kw['importance']})")
+
+    with tabs[5]:
         st.subheader("Processed review data")
         st.caption(f"Processed dataset saved to {Path(processed_path).as_posix()}")
         st.dataframe(
